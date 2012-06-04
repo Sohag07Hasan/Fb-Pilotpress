@@ -4,11 +4,17 @@
  * handles the membership login
  */
 
+session_start();
+
+//var_dump($_SESSION);
+
 class FbPilotPress{
 	
 	static function init(){
 		//add markup to footer
-		add_action('wp_footer', array(get_class(), 'fb_footer'));
+		//add_action('admin_footer', array(get_class(), 'fb_footer'));
+		add_action('login_footer', array(get_class(), 'fb_footer'));
+		
 		add_action('admin_print_footer_scripts', array(get_class(), 'fb_footer'));
 		//add_action('admin_enqueue_scripts', array(get_class(), 'facebook_header'), 20);
 		// add the section on the user profile page
@@ -22,6 +28,20 @@ class FbPilotPress{
 		
 		//ajax manipulation to connect facebook account with the wp
 		add_action('wp_ajax_pilotpress_update_fbuid', array(get_class(), 'ajax_pilotpress_update_fbuid'));
+		add_action('wp_ajax_pilotpress_log', array(get_class(), 'ajax_pilotpress_login'));
+		add_action('wp_ajax_nopriv_pilotpress_log', array(get_class(), 'ajax_pilotpress_login'));
+		
+		//add login button in login form
+		add_action('login_form', array(get_class(), 'extend_login_form'));
+		
+		//add_action('wp_authenticate', array(get_class(), 'authenticate'), 100, 3);
+		
+		add_action('init', array(get_class(), 'log_data_to_pilotpress'));
+	}
+	
+	static function authenticate($userdata){
+		var_dump($userdata);
+		exit;
 	}
 	
 	/**
@@ -31,6 +51,7 @@ class FbPilotPress{
    static function fb_footer(){
 	   $fb_info = self::get_fbapp_info();
 	   self::pilotpress_login_update_fbuid();
+	   self::pilotpress_login_handle();
 	?> 
 		<div id="fb-root"></div>
 		<script>
@@ -84,9 +105,15 @@ class FbPilotPress{
 				<th><label> Facebook Connect </label></th>
 				<td>
 					<?php
-						$fbuid = get_user_meta($profile->ID, 'fb_u_id', true);
+						$fbuid = self::get_facebookId();
+											
 						if($fbuid){
-							echo 'connected';
+						?>
+							<p>
+								<fb:profile-pic size="square" width="32" height="32" uid="<?php echo $fbuid; ?>" linked="true"></fb:profile-pic>
+								<input type="button" class="button-primary" value="<?php _e('Disconnect from WordPress'); ?>" onclick="pilotpress_login_update_fbuid(1); return false;" />
+							</p>
+					        <?php
 						}
 						else{
 						?>
@@ -177,8 +204,7 @@ class FbPilotPress{
 	/*
 	 * ajax handler function to save the userid into database
 	 */
-	static function ajax_pilotpress_update_fbuid(){
-		$user = wp_get_current_user();
+	static function ajax_pilotpress_update_fbuid(){		
 		$fbuid = (int)($_POST['fbuid']);
 		if($fbuid){
 			$fb_info = self::get_fbapp_info();			
@@ -189,11 +215,131 @@ class FbPilotPress{
 			
 			$fbuser = $facebook->getUser();
 			if($fbuser){
-				update_usermeta($user->ID, 'fb_u_id', $fbuser);
+				self::updateUserFbAccount($fbuser);
 			}
-			echo 1;
-			exit;
+			
 		}
+		
+		else{
+			self::deleteUserFbAccount();
+		}
+		
+		echo  1;
+		exit;
+	}
+	
+	//add facebook account
+	static function updateUserFbAccount($fbId){
+		$user = wp_get_current_user();
+		update_user_meta($user->ID, 'facebook_id', $fbId);
+	}
+	
+	
+	static function deleteUserFbAccount(){
+		$user = wp_get_current_user();
+		delete_user_meta($user->ID, 'facebook_id');
+	}
+	
+	/*
+	 * add login form in the login form
+	 */
+	static function extend_login_form(){
+	?>
+		<p class="pilotpress-ajax-message" style="display:none; background-color:#D16868; border: 1px solid #FF0000;">Sorry! This facebook account is not associated with any wp account</p>
+		<br/><p><fb:login-button scope="email" v="2" size="large" onlogin="pilotpress_login_with_facebook();"><fb:intl><?php _e('Login with Facebook'); ?></fb:intl></fb:login-button></p>
+		
+	<?php
+	}
+	
+	/*
+	 * handles the login functionality
+	 * if a wp account is connected with fb account, it helps to login with the facebook account
+	 */
+	static function pilotpress_login_handle(){
+		?>
+			<script>
+				function pilotpress_login_with_facebook(){
+					var ajax_url = '<?php echo admin_url("admin-ajax.php"); ?>';					
+					var data = {
+						action: 'pilotpress_log'						
+					}
+					
+					jQuery.post(ajax_url, data, function(response) {
+						if (response == '1') {
+							location.reload(true);
+						}
+						else{
+							jQuery('.pilotpress-ajax-message').show();							
+						}
+					});
+				}
+			</script>
+		<?php
+	}
+	
+	
+	/*
+	 * ajax login functionality 
+	 */
+	static function ajax_pilotpress_login(){
+		$fb_info = self::get_fbapp_info();			
+			$facebook = new Facebook(array(
+				'appId' => $fb_info['id'],
+				'secret' => $fb_info['secret']
+			));
+			
+		$fbuser = $facebook->getUser();
+		
+		if($fbuser){			
+			if(self::get_user_by_fbid($fbuser)){
+				$_SESSION['pilotpress_fb_user'] = $fbuser;
+				echo 1;
+				exit;				
+			}
+			else{
+				echo 0;
+				exit;
+			}
+			
+		}
+		else{
+			echo 0;
+			exit;		
+		}
+		
+		exit;
+	}
+	
+	
+	/*
+	 * log data into pilorpress
+	 */
+	static function log_data_to_pilotpress(){
+		if(isset($_SESSION['pilotpress_fb_user'])){
+			$fb_id = $_SESSION['pilotpress_fb_user'];
+			unset($_SESSION['pilotpress_fb_user']);			
+			$wp_user_id = self::get_user_by_fbid($fb_id);	
+			$_POST["wp-submit"] = true;
+			$user = new WP_User($wp_user_id);
+			var_dump($user);
+			exit;			
+		}
+	}
+	
+	/*
+	 * return wp_user_id
+	 */
+	static function get_user_by_fbid($fb_id){
+		global $wpdb;
+		return $wpdb->get_var( $wpdb->prepare("SELECT user_id FROM $wpdb->usermeta WHERE meta_key = 'facebook_id' AND meta_value = %s", $fb_id) );
+	}
+	
+	/*
+	 * returns facebook id
+	 */
+	static function get_facebookId(){
+		$user = wp_get_current_user();			
+		return get_user_meta($user->ID, 'facebook_id', true);
 	}
 	
 }

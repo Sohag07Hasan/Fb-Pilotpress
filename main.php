@@ -8,11 +8,17 @@
  */
 
 define('FBPILOTPRESS_DIR', dirname(__FILE__));
+define('FBPILOTPRESS_FILE', __FILE__);
 define('FBPILOTPRESS_URI', plugins_url('', __FILE__));
 define('FBPILOTPRESS_SDK', FBPILOTPRESS_DIR . '/php-sdk/src');
 
 //facebook sdk
 include FBPILOTPRESS_SDK . '/facebook.php';
+
+/*databae
+include FBPILOTPRESS_DIR . '/classes/database.php';
+PilotPressFbDatabase::init();
+*/
 
 include FBPILOTPRESS_DIR . '/classes/fb-pilotpress.php';
 FbPilotPress::init();
